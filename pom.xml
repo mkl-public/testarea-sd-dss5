@@ -20,7 +20,7 @@
 	</build>
 	<properties>
 		<sd-dss.version>4.7.0</sd-dss.version>
-		<junit.version>4.7</junit.version>
+		<junit.version>4.12</junit.version>
 	</properties>
 	<dependencies>
 		<dependency>
