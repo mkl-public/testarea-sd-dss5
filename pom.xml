@@ -3,7 +3,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>mkl.testarea.sd-dss5</groupId>
   <artifactId>testarea-sd-dss5</artifactId>
-  <version>5.0.0-SNAPSHOT</version>
+  <version>5.1.0-SNAPSHOT</version>
   <name>Test area for public SD-DSS v5.x issues on stackoverflow etc</name>
   <build>
     <plugins>
@@ -19,7 +19,7 @@
     </plugins>
   </build>
   <properties>
-    <sd-dss.version>5.0.RC1</sd-dss.version>
+    <sd-dss.version>5.1.RC1</sd-dss.version>
     <junit.version>4.12</junit.version>
   </properties>
   <dependencies>
