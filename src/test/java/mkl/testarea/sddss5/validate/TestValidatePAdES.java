@@ -80,7 +80,9 @@ public class TestValidatePAdES
             // some PDF, Signamus signed, Adobe LTV enabled
             {"pdf-exceetLegacySigned-ltvEnabled.pdf", (Consumer<Reports>) TestValidatePAdES::simpleIndicationTotalPassed},
             // some PDF, SLMBC signed, ECDSA signature
-            {"pdf-exceetLegacySigned-ECDSA.pdf", (Consumer<Reports>) TestValidatePAdES::simpleIndicationTotalPassed}
+            {"pdf-exceetLegacySigned-ECDSA.pdf", (Consumer<Reports>) TestValidatePAdES::simpleIndicationTotalPassed},
+            // some PDF, ISAF signed, RSAwithSHA256andMGF1, test CA (and, therefore, indeterminate)
+            {"pdf-exceetLegacySigned-RSASSA-test.pdf", (Consumer<Reports>) TestValidatePAdES::simpleIndicationIndeterminate}
         };
     }
 
