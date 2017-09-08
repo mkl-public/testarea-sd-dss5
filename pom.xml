@@ -19,7 +19,7 @@
     </plugins>
   </build>
   <properties>
-    <sd-dss.version>5.1.RC1</sd-dss.version>
+    <sd-dss.version>5.1</sd-dss.version>
     <junit.version>4.12</junit.version>
   </properties>
   <dependencies>
