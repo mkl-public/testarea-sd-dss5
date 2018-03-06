@@ -5,9 +5,11 @@ import static java.util.Collections.singleton;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Field;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.security.Security;
+import java.util.Map;
 import java.util.function.Consumer;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
@@ -21,6 +23,7 @@ import org.junit.runners.Parameterized.Parameters;
 
 import eu.europa.esig.dss.DSSDocument;
 import eu.europa.esig.dss.InMemoryDocument;
+import eu.europa.esig.dss.SignatureAlgorithm;
 import eu.europa.esig.dss.client.crl.OnlineCRLSource;
 import eu.europa.esig.dss.client.http.commons.CommonsDataLoader;
 import eu.europa.esig.dss.client.http.commons.OCSPDataLoader;
@@ -67,6 +70,13 @@ public class TestValidatePAdES
         job.setLotlCode("EU");
         job.setRepository(tslRepository);
         job.refresh();
+
+        // For PLAIN-ECDSA
+        Field OID_ALGORITHMS = SignatureAlgorithm.class.getDeclaredField("OID_ALGORITHMS");
+        OID_ALGORITHMS.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<String, SignatureAlgorithm> map = (Map<String, SignatureAlgorithm>) OID_ALGORITHMS.get(null);
+        map.put("0.4.0.127.0.7.1.1.4.1.3", SignatureAlgorithm.ECDSA_SHA256);
     }
 
     @Parameters(name = "{index}: Validate signed PDF {0}")
@@ -82,7 +92,9 @@ public class TestValidatePAdES
             // some PDF, SLMBC signed, ECDSA signature
             {"pdf-exceetLegacySigned-ECDSA.pdf", (Consumer<Reports>) TestValidatePAdES::simpleIndicationTotalPassed},
             // some PDF, ISAF signed, RSAwithSHA256andMGF1, test CA (and, therefore, indeterminate)
-            {"pdf-exceetLegacySigned-RSASSA-test.pdf", (Consumer<Reports>) TestValidatePAdES::simpleIndicationIndeterminate}
+            {"pdf-exceetLegacySigned-RSASSA-test.pdf", (Consumer<Reports>) TestValidatePAdES::simpleIndicationIndeterminate},
+            // some PDF, SecCommerce signed, PLAIN-ECDSA signature
+            {"pdf-secCommerceLegacySigned-PLAIN.pdf", (Consumer<Reports>) TestValidatePAdES::simpleIndicationTotalPassed}
         };
     }
 
@@ -124,6 +136,8 @@ public class TestValidatePAdES
             verifier.setTrustedCertSource(LOTL);
 
             SignedDocumentValidator validator = SignedDocumentValidator.fromDocument(document);
+            // validation at claimed signing time
+            validator.provideProcessExecutorInstance().setCurrentTime(validator.getSignatures().get(0).getSigningTime());
             validator.setCertificateVerifier(verifier);
 
             Reports reports = validator.validateDocument();
