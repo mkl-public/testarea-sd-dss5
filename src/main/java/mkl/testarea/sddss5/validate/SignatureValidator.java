@@ -4,28 +4,45 @@ import static java.util.Collections.singleton;
 
 import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.Field;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.security.Security;
-import java.util.Map;
+import java.util.Arrays;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
-import eu.europa.esig.dss.DSSDocument;
-import eu.europa.esig.dss.FileDocument;
-import eu.europa.esig.dss.SignatureAlgorithm;
-import eu.europa.esig.dss.client.crl.OnlineCRLSource;
-import eu.europa.esig.dss.client.http.commons.CommonsDataLoader;
-import eu.europa.esig.dss.client.http.commons.OCSPDataLoader;
-import eu.europa.esig.dss.client.ocsp.OnlineOCSPSource;
-import eu.europa.esig.dss.tsl.TrustedListsCertificateSource;
-import eu.europa.esig.dss.tsl.service.TSLRepository;
-import eu.europa.esig.dss.tsl.service.TSLValidationJob;
+import eu.europa.esig.dss.model.DSSDocument;
+import eu.europa.esig.dss.model.DSSException;
+import eu.europa.esig.dss.model.FileDocument;
+import eu.europa.esig.dss.service.crl.OnlineCRLSource;
+import eu.europa.esig.dss.service.http.commons.CommonsDataLoader;
+import eu.europa.esig.dss.service.http.commons.FileCacheDataLoader;
+import eu.europa.esig.dss.service.http.commons.OCSPDataLoader;
+import eu.europa.esig.dss.service.ocsp.OnlineOCSPSource;
+import eu.europa.esig.dss.spi.client.http.DSSFileLoader;
+import eu.europa.esig.dss.spi.client.http.IgnoreDataLoader;
+import eu.europa.esig.dss.spi.tsl.TrustedListsCertificateSource;
+import eu.europa.esig.dss.spi.x509.CertificateSource;
+import eu.europa.esig.dss.spi.x509.CommonCertificateSource;
+import eu.europa.esig.dss.spi.x509.KeyStoreCertificateSource;
+import eu.europa.esig.dss.tsl.alerts.LOTLAlert;
+import eu.europa.esig.dss.tsl.alerts.TLAlert;
+import eu.europa.esig.dss.tsl.alerts.detections.LOTLLocationChangeDetection;
+import eu.europa.esig.dss.tsl.alerts.detections.OJUrlChangeDetection;
+import eu.europa.esig.dss.tsl.alerts.detections.TLExpirationDetection;
+import eu.europa.esig.dss.tsl.alerts.detections.TLSignatureErrorDetection;
+import eu.europa.esig.dss.tsl.alerts.handlers.log.LogLOTLLocationChangeAlertHandler;
+import eu.europa.esig.dss.tsl.alerts.handlers.log.LogOJUrlChangeAlertHandler;
+import eu.europa.esig.dss.tsl.alerts.handlers.log.LogTLExpirationAlertHandler;
+import eu.europa.esig.dss.tsl.alerts.handlers.log.LogTLSignatureErrorAlertHandler;
+import eu.europa.esig.dss.tsl.cache.CacheCleaner;
+import eu.europa.esig.dss.tsl.function.OfficialJournalSchemeInformationURI;
+import eu.europa.esig.dss.tsl.job.TLValidationJob;
+import eu.europa.esig.dss.tsl.source.LOTLSource;
+import eu.europa.esig.dss.tsl.sync.AcceptAllStrategy;
 import eu.europa.esig.dss.validation.CommonCertificateVerifier;
 import eu.europa.esig.dss.validation.SignedDocumentValidator;
 import eu.europa.esig.dss.validation.reports.Reports;
-import eu.europa.esig.dss.x509.KeyStoreCertificateSource;
 
 /**
  * This class validates the (hopefully signed) PDFs on the command line.
@@ -35,41 +52,118 @@ import eu.europa.esig.dss.x509.KeyStoreCertificateSource;
 public class SignatureValidator {
     final static TrustedListsCertificateSource LOTL = new TrustedListsCertificateSource();
 
-    static
+    public static void initialize()
     {
         try {
             if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null)
             {
-                //Security.addProvider(new BouncyCastleProvider());
-                Security.insertProviderAt(new BouncyCastleProvider(), 1);
+                Security.addProvider(new BouncyCastleProvider());
+                //Security.insertProviderAt(new BouncyCastleProvider(), 1);
             }
 
-            // The keystore contains certificates extracted from the OJ
-            KeyStoreCertificateSource keyStoreCertificateSource = new KeyStoreCertificateSource(new File("src/test/resources/keystore.p12"), "PKCS12", "dss-password");
-            TSLRepository tslRepository = new TSLRepository();
-            tslRepository.setTrustedListsCertificateSource(LOTL);
-            TSLValidationJob job = new TSLValidationJob();
-            job.setDataLoader(new CommonsDataLoader());
-            job.setOjContentKeyStore(keyStoreCertificateSource);
-            job.setLotlRootSchemeInfoUri("https://ec.europa.eu/information_society/policy/esignature/trusted-list/tl.html");
-            job.setLotlUrl("https://ec.europa.eu/information_society/policy/esignature/trusted-list/tl-mp.xml");
-            job.setOjUrl("http://eur-lex.europa.eu/legal-content/EN/TXT/?uri=uriserv:OJ.C_.2016.233.01.0001.01.ENG");
-            job.setLotlCode("EU");
-            job.setRepository(tslRepository);
-            job.refresh();
+            TLValidationJob job = new TLValidationJob();
+            job.setOfflineDataLoader(offlineLoader());
+            job.setOnlineDataLoader(onlineLoader());
+            job.setTrustedListCertificateSource(LOTL);
+            job.setSynchronizationStrategy(new AcceptAllStrategy());
+            job.setCacheCleaner(cacheCleaner());
 
-            // For PLAIN-ECDSA
-            Field OID_ALGORITHMS = SignatureAlgorithm.class.getDeclaredField("OID_ALGORITHMS");
-            OID_ALGORITHMS.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            Map<String, SignatureAlgorithm> map = (Map<String, SignatureAlgorithm>) OID_ALGORITHMS.get(null);
-            map.put("0.4.0.127.0.7.1.1.4.1.3", SignatureAlgorithm.ECDSA_SHA256);
+            LOTLSource europeanLOTL = europeanLOTL();
+            job.setListOfTrustedListSources(europeanLOTL);
+
+            job.setLOTLAlerts(Arrays.asList(ojUrlAlert(europeanLOTL), lotlLocationAlert(europeanLOTL)));
+            job.setTLAlerts(Arrays.asList(tlSigningAlert(), tlExpirationDetection()));
+
+            job.onlineRefresh();
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
+    private static final String LOTL_URL = "https://ec.europa.eu/tools/lotl/eu-lotl.xml";
+    private static final String OJ_URL = "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=uriserv:OJ.C_.2019.276.01.0001.01.ENG";
+
+    public static LOTLSource europeanLOTL() {
+        LOTLSource lotlSource = new LOTLSource();
+        lotlSource.setUrl(LOTL_URL);
+        lotlSource.setCertificateSource(officialJournalContentKeyStore());
+//        lotlSource.setCertificateSource(new CommonCertificateSource());
+        lotlSource.setSigningCertificatesAnnouncementPredicate(new OfficialJournalSchemeInformationURI(OJ_URL));
+        lotlSource.setPivotSupport(true);
+        return lotlSource;
+    }
+
+    public static CertificateSource officialJournalContentKeyStore() {
+        try {
+            return new KeyStoreCertificateSource(new File("src/test/resources/keystore.p12"), "PKCS12", "dss-password");
+        } catch (IOException e) {
+            throw new DSSException("Unable to load the keystore", e);
+        }
+    }
+
+    public static DSSFileLoader offlineLoader() {
+        FileCacheDataLoader offlineFileLoader = new FileCacheDataLoader();
+        offlineFileLoader.setCacheExpirationTime(Long.MAX_VALUE);
+        offlineFileLoader.setDataLoader(new IgnoreDataLoader());
+        offlineFileLoader.setFileCacheDirectory(tlCacheDirectory());
+        return offlineFileLoader;
+    }
+
+    public static DSSFileLoader onlineLoader() {
+        FileCacheDataLoader onlineFileLoader = new FileCacheDataLoader();
+        onlineFileLoader.setCacheExpirationTime(0);
+        onlineFileLoader.setDataLoader(dataLoader());
+        onlineFileLoader.setFileCacheDirectory(tlCacheDirectory());
+        return onlineFileLoader;
+    } 
+
+    public static File tlCacheDirectory() {
+        File rootFolder = new File(System.getProperty("java.io.tmpdir"));
+        File tslCache = new File(rootFolder, "dss-tsl-loader");
+        if (tslCache.mkdirs()) {
+//            LOG.info("TL Cache folder : {}", tslCache.getAbsolutePath());
+        }
+        return tslCache;
+    }
+
+    public static CommonsDataLoader dataLoader() {
+        return new CommonsDataLoader();
+    } 
+
+    public static CacheCleaner cacheCleaner() {
+        CacheCleaner cacheCleaner = new CacheCleaner();
+        cacheCleaner.setCleanMemory(true);
+        cacheCleaner.setCleanFileSystem(true);
+        cacheCleaner.setDSSFileLoader(offlineLoader());
+        return cacheCleaner;
+    }
+
+    public static TLAlert tlSigningAlert() {
+        TLSignatureErrorDetection signingDetection = new TLSignatureErrorDetection();
+        LogTLSignatureErrorAlertHandler handler = new LogTLSignatureErrorAlertHandler();
+        return new TLAlert(signingDetection, handler);
+    }
+
+    public static TLAlert tlExpirationDetection() {
+        TLExpirationDetection expirationDetection = new TLExpirationDetection();
+        LogTLExpirationAlertHandler handler = new LogTLExpirationAlertHandler();
+        return new TLAlert(expirationDetection, handler);
+    }
+
+    public static LOTLAlert ojUrlAlert(LOTLSource source) {
+        OJUrlChangeDetection ojUrlDetection = new OJUrlChangeDetection(source);
+        LogOJUrlChangeAlertHandler handler = new LogOJUrlChangeAlertHandler();
+        return new LOTLAlert(ojUrlDetection, handler);
+    }
+
+    public static LOTLAlert lotlLocationAlert(LOTLSource source) {
+        LOTLLocationChangeDetection lotlLocationDetection = new LOTLLocationChangeDetection(source);
+        LogLOTLLocationChangeAlertHandler handler = new LogLOTLLocationChangeAlertHandler();
+        return new LOTLAlert(lotlLocationDetection, handler);
+    }
+ 
     public static void main(String[] args) throws IOException {
+        initialize();
         for (String arg: args)
         {
             final File file = new File(arg);
@@ -102,7 +196,7 @@ public class SignatureValidator {
         verifier.setCrlSource(crlSource);
         verifier.setDataLoader(new CommonsDataLoader());
         verifier.setOcspSource(ocspSource);
-        verifier.setTrustedCertSource(LOTL);
+        verifier.setTrustedCertSources(LOTL);
 
         SignedDocumentValidator validator = SignedDocumentValidator.fromDocument(document);
         // validation at claimed signing time
